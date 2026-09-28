@@ -61,13 +61,13 @@ it to the appropriate predictor.
    ```
 
 2. Model downloads and first GPU scheduling can take several minutes. Press
-   `Ctrl-C` once the pods are ready, then retrieve the UI and API URLs:
+   `Ctrl-C` once the pods are ready, then retrieve the UI URLs:
 
    ```bash
    WEBUI_HOST=$(oc -n praxis-sr-demo get route openwebui -o jsonpath='{.spec.host}')
-   PRAXIS_HOST=$(oc -n praxis-sr-demo get route praxis -o jsonpath='{.spec.host}')
+   TRACE_UI_HOST=$(oc -n praxis-sr-demo get route trace-ui -o jsonpath='{.spec.host}')
    echo "Open WebUI: https://${WEBUI_HOST}"
-   echo "Praxis API: https://${PRAXIS_HOST}"
+   echo "Trace UI: https://${TRACE_UI_HOST}"
    ```
 
 ### Results
