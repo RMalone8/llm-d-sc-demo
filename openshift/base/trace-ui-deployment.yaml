@@ -19,9 +19,9 @@ spec:
             - name: PRAXIS_UPSTREAM
               value: http://praxis:8080
             - name: CPU_UPSTREAM
-              value: http://vllm-cpu-predictor:8080
+              value: http://vllm-cpu-predictor:80
             - name: GPU_UPSTREAM
-              value: http://vllm-gpu-predictor:8080
+              value: http://vllm-gpu-predictor:80
             - name: TRACE_DB_PATH
               value: /data/traces.db
           ports:

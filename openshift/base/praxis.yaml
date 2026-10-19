@@ -4,6 +4,15 @@ insecure_options:
 admin:
   address: "127.0.0.1:9901"
 
+# Per-peer circuit breaker for the failover sub-requests below. It counts
+# connect/io/deadline failures only; an HTTP 502 relayed by trace-ui does not
+# count, so it opens when a relay is unreachable or hangs past step_timeout_ms.
+runtime:
+  subrequest_circuit_breaker:
+    consecutive_failures: 3
+    recovery_window_secs: 30
+    half_open_timeout_secs: 15
+
 listeners:
   - name: ai-gateway
     address: "0.0.0.0:8080"
@@ -26,27 +35,76 @@ filter_chains:
             value: application/json
         body: >-
           {"object":"list","data":[{"id":"Semantic-Qwen","object":"model","created":0,"owned_by":"praxis"}]}
-      - filter: llm_d_sc
-        endpoint: "llm-d-sc:50051"
-        default_cluster: vllm-cpu
-        routes:
-          - label: SIMPLE
-            cluster: vllm-cpu
-          - label: MEDIUM
-            cluster: vllm-cpu
-          - label: COMPLEX
-            cluster: vllm-gpu
-          - label: REASONING
-            cluster: vllm-gpu
-        timeout_ms: 500
-        connect_timeout_ms: 1000
-        min_score: 0.0
-        on_unavailable: default_cluster
-        on_resource_exhausted: default_cluster
-        emit_headers: true
-      - filter: load_balancer
-        clusters:
-          - name: vllm-gpu
-            endpoints: ["trace-ui:8082"]
-          - name: vllm-cpu
-            endpoints: ["trace-ui:8081"]
+      # Must stay last in the chain. Step 1 classifies and routes; if the
+      # chosen backend fails, step 2 replays the same body against the GPU.
+      - filter: iterative_request_router
+        initial_step: classify-and-route
+        max_iterations: 3
+        # End-to-end deadline, including the response. The 30s default would
+        # cut CPU generations short.
+        timeout_ms: 300000
+        # Bounds how long a hung backend delays the GPU fallback.
+        step_timeout_ms: 120000
+        steps:
+          - name: classify-and-route
+            filters:
+              - filter: llm_d_sc
+                endpoint: "llm-d-sc:50051"
+                default_cluster: vllm-gpu
+                routes:
+                  - label: SIMPLE
+                    cluster: vllm-cpu
+                  - label: MEDIUM
+                    cluster: vllm-cpu
+                  - label: COMPLEX
+                    cluster: vllm-gpu
+                  - label: REASONING
+                    cluster: vllm-gpu
+                timeout_ms: 500
+                connect_timeout_ms: 1000
+                min_score: 0.0
+                on_unavailable: default_cluster
+                on_resource_exhausted: default_cluster
+                emit_headers: true
+              - filter: load_balancer
+                clusters:
+                  - name: vllm-gpu
+                    endpoints: ["trace-ui:8082"]
+                  - name: vllm-cpu
+                    endpoints: ["trace-ui:8081"]
+            # trace-ui answers 502 when a predictor is unreachable, so the
+            # status rule is what catches a down CPU predictor. The transport
+            # rule covers the relay itself being unreachable or the circuit
+            # being open. A COMPLEX request that fails on the GPU is also
+            # retried once on the GPU (the rules cannot tell which cluster
+            # failed).
+            on_result:
+              - origin: transport
+                next: gpu-fallback
+              - status: [429, 500, 502, 503, 504]
+                next: gpu-fallback
+              - default: true
+                done: true
+          - name: gpu-fallback
+            filters:
+              # A transitioned step starts with empty headers, so restore the
+              # content type vLLM requires. X-Praxis-Fallback lets trace-ui flag
+              # the request as a fallback.
+              - filter: headers
+                request_set:
+                  - name: Content-Type
+                    value: application/json
+                response_add:
+                  - name: X-Praxis-Fallback
+                    value: "true"
+              - filter: router
+                routes:
+                  - path_prefix: "/"
+                    cluster: vllm-gpu
+              - filter: load_balancer
+                clusters:
+                  - name: vllm-gpu
+                    endpoints: ["trace-ui:8082"]
+            on_result:
+              - default: true
+                done: true
