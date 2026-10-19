@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>llm-d-sc — demo slides</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@500;700&family=Red+Hat+Text:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--red:#ee0000;--red-bright:#ff4d4d;--ink:#ffffff;--text:#e3e3e3;--muted:#9a9a9a;--line:#3d3d3d;--panel:#1f1f1f}
+*{box-sizing:border-box}
+body{margin:0;padding:32px;background:#0b0b0b;color-scheme:dark;color:var(--text);font:16px/1.45 "Red Hat Text","Red Hat Display","Helvetica Neue",Helvetica,Arial,sans-serif;min-height:100vh}
+h1,.eyebrow,.card h2,.band,.pill{font-family:"Red Hat Display","Red Hat Text","Helvetica Neue",Helvetica,Arial,sans-serif}
+.deck{display:grid;gap:28px;justify-items:center}
+.slide{position:relative;width:min(1280px,100%);aspect-ratio:16/9;overflow:hidden;display:flex;flex-direction:column;background:#151515;border:1px solid var(--line)}
+.slide::before{content:"";position:absolute;left:0;top:0;right:0;height:6px;background:var(--red)}
+.slide[hidden]{display:none}
+.title-slide{justify-content:center}
+.title-content{padding:0 96px}
+.title-slide h1{font-size:58px;line-height:1.1;margin:0 0 46px}
+.presenter-name{margin:0 0 8px;color:var(--text);font-size:25px}
+.presenter-role{margin:0;color:var(--muted);font-size:21px}
+.head{padding:58px 64px 10px}
+.eyebrow{margin:0;color:var(--red-bright);font-size:14px;font-weight:700;letter-spacing:.12em;text-transform:uppercase}
+h1{margin:16px 0 14px;color:var(--ink);font-size:46px;line-height:1.15;font-weight:700;letter-spacing:-.01em}
+.intro-title{font-weight:500}
+.intro-title strong{font-weight:700}
+.sub{margin:0;color:var(--muted);font-size:22px}
+.body{flex:1;display:grid;gap:20px;padding:30px 64px;min-height:0;align-content:start;transform-origin:top center}
+.cols-2{grid-template-columns:1fr 1fr}
+.cols-4{grid-template-columns:repeat(4,1fr)}
+#slide-1 .body{display:block;padding-top:36px}
+#slide-1 ul{list-style:disc;padding-left:32px;max-width:1050px}
+#slide-1 li{font-size:28px;margin-bottom:30px}
+#slide-1 .sub-bullets{list-style:circle;margin-top:16px}
+#slide-1 .sub-bullets li{font-size:21px;color:#aaa;margin-bottom:10px}
+#slide-1 li b{font-weight:600}
+.card{border:1px solid var(--line);border-top:3px solid var(--red);background:var(--panel);padding:22px 24px}
+.card h2{margin:0 0 16px;color:var(--ink);font-size:15px;font-weight:700;letter-spacing:.1em;text-transform:uppercase}
+.repo-body{align-content:center}
+.repo-url{color:var(--text);font-size:21px;overflow-wrap:anywhere;text-decoration-color:var(--red-bright);text-underline-offset:4px}
+.repo-url:hover,.repo-url:focus-visible{color:var(--ink)}
+ul{margin:0;padding:0;list-style:none}
+li{margin:0 0 16px;font-size:21px;line-height:1.32;color:var(--text)}
+li:last-child{margin-bottom:0}
+li b{color:var(--ink);font-weight:700}
+.num{color:var(--red-bright);font-weight:700}
+.route{position:relative;margin:0 64px 22px}
+.band{width:min(560px,100%);margin:0 auto;border:1px solid var(--line);background:var(--panel);padding:14px 20px 13px;font-size:18px;color:var(--text)}
+.cap{position:absolute;left:0;right:calc(50% + 297px);transform:translateY(-50%);text-align:right;color:#7c7c7c;font-size:13px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;line-height:1.25}
+.cap.pools{top:80px}
+.cap.labels{top:30px}
+.labels,.targets,.links{width:100%}
+.labels,.targets{display:grid;gap:12px}
+.labels{grid-template-columns:repeat(4,1fr)}
+.targets{grid-template-columns:repeat(2,1fr)}
+.labels>*,.targets>*{justify-self:center}
+.links{display:block;height:20px}
+.links path{fill:none;stroke:var(--ink);stroke-width:2;vector-effect:non-scaling-stroke}
+.pill{display:inline-flex;align-items:center;height:30px;padding:0 10px;border:1px solid #6e6e6e;background:#212121;font-size:16px;line-height:1;font-weight:700;color:var(--ink)}
+.arrow{color:var(--muted)}
+.foot{margin-top:auto;padding:16px 64px 22px;border-top:1px solid var(--line);color:var(--muted);font-size:18px}
+.foot b{color:var(--ink)}
+.foot a{color:inherit;text-underline-offset:3px}
+.tiny{font-size:14px;color:#808080}
+.nav{position:fixed;right:20px;bottom:16px;display:flex;gap:10px;align-items:center;color:var(--muted);font-size:12px;background:#1f1f1f;border:1px solid var(--line);padding:6px 12px}
+.nav button{all:unset;cursor:pointer;color:var(--ink);font-size:15px;padding:0 6px}
+.nav button:hover{background:var(--panel)}
+@media print{body{padding:0;background:#0b0b0b;-webkit-print-color-adjust:exact;print-color-adjust:exact}.nav{display:none}.slide{display:flex!important;page-break-after:always;border:none;width:100%}}
+</style>
+</head>
+<body>
+<main class="deck">
+
+<section class="slide title-slide" id="slide-title" aria-label="llm-d-semantic-classifier Demo">
+  <div class="title-content">
+    <h1>llm-d-semantic-classifier Demo</h1>
+    <p class="presenter-name">Ryan Malone</p>
+    <p class="presenter-role">Associate Software Engineer</p>
+  </div>
+</section>
+
+<section class="slide" id="slide-1" aria-label="Why Semantic Routing?" hidden>
+  <header class="head">
+    <p class="eyebrow">Background</p>
+    <h1>Why Semantic Routing?</h1>
+    <p class="sub">For LLM-backed applications and developer workflows</p>
+  </header>
+  <div class="body">
+    <ul>
+      <li>Not all requests are created equal; matching each request to the model capacity it needs can <b>reduce costs</b>.
+        <ul class="sub-bullets">
+          <li>i.e. "Let's implement this next feature in Rust" vs "Remind me the git command to undo my last commit"</li>
+        </ul>
+      </li>
+      <li>Requests containing personal or organizational data may need to stay on-premises for <b>security and privacy concerns</b>.
+        <ul class="sub-bullets">
+          <li>"Sure. My social security number is..."</li>
+        </ul>
+      </li>
+      <li><b>Domain-specific</b> requests can be routed to <b>specialized models</b> for more relevant responses.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide" id="slide-2" aria-label="What llm-d-sc is" hidden>
+  <header class="head">
+    <p class="eyebrow">Component overview</p>
+    <h1 class="intro-title"><strong>llm-d-sc:</strong> Semantic classification<br>for inference routing</h1>
+    <p class="sub">A classifier the gateway consults on every request.</p>
+  </header>
+  <div class="body cols-2">
+    <div class="card">
+      <h2>How it works</h2>
+      <ul>
+        <li>Receives the prompt over gRPC</li>
+        <li>Compares against labelled example requests (anchor)</li>
+        <li>Returns one label: <b>SIMPLE</b>, <b>MEDIUM</b>, <b>COMPLEX</b> or <b>REASONING</b></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h2>How it runs</h2>
+      <ul>
+        <li>Runs entirely on CPU and is written in Rust.</li>
+        <li>Designed for <b>lightweight</b>, <b>low-latency</b> classification</li>
+        <li>Rejects excess requests rather than queueing them</li>
+      </ul>
+    </div>
+  </div>
+  <div class="route">
+    <span class="cap labels">Classification Labels</span>
+    <span class="cap pools">vLLM Pools</span>
+    <div class="band">
+      <div class="labels">
+        <span class="pill">SIMPLE</span><span class="pill">MEDIUM</span><span class="pill">COMPLEX</span><span class="pill">REASONING</span>
+      </div>
+      <svg class="links" viewBox="0 0 520 20" preserveAspectRatio="none" aria-hidden="true">
+        <path d="M60.5 2 L109 15"/><path d="M102.7 16.5 L109 15"/><path d="M104.2 10.6 L109 15"/>
+        <path d="M193.5 2 L145 15"/><path d="M149.8 10.6 L145 15"/><path d="M151.3 16.5 L145 15"/>
+        <path d="M326.5 2 L375 15"/><path d="M368.7 16.5 L375 15"/><path d="M370.2 10.6 L375 15"/>
+        <path d="M459.5 2 L411 15"/><path d="M415.8 10.6 L411 15"/><path d="M417.3 16.5 L411 15"/>
+      </svg>
+      <div class="targets">
+        <span class="pill cpu">CPU pool</span><span class="pill gpu">GPU pool</span>
+      </div>
+    </div>
+  </div>
+
+  <footer class="foot">The classifier returns labels only. Praxis selects the backend.</footer>
+</section>
+
+<section class="slide" id="slide-3" aria-label="Known gaps" hidden>
+  <header class="head">
+    <p class="eyebrow">Limitations</p>
+    <h1>Known gaps in this routing path</h1>
+    <p class="sub">Component limits and their consequences in this CPU/GPU routing path.</p>
+  </header>
+  <div class="body cols-4">
+    <div class="card">
+      <h2>Conversation continuity</h2>
+      <ul>
+        <li>The Praxis filter is designed to send just the latest user message to llm-d-sc.</li>
+        <li>But a long GPU session routed to the CPU can hit a cold KV cache.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h2>Classification confidence</h2>
+      <ul>
+        <li>Scores rank labels but are not calibrated probabilities.</li>
+        <li>No fallback for uncertain classifications.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h2>Health and metrics</h2>
+      <ul>
+        <li>No gRPC or HTTP readiness endpoint.</li>
+        <li>Timing data is logged, but no metrics endpoint is exposed.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h2>Narrow Benchmarking</h2>
+      <ul>
+        <li>Published benchmarks come from one host.</li>
+        <li>Service round trips and pod CPU limits remain unmeasured upstream.</li>
+      </ul>
+    </div>
+  </div>
+  <footer class="foot">llm-d-sc supplies the label; the gateway chooses the model. <span class="tiny">sources: llm-d-sc README, specs/0.22-cache-session, docs/known-gaps.md</span></footer>
+</section>
+
+<section class="slide" id="slide-4" aria-label="Repositories" hidden>
+  <header class="head">
+    <p class="eyebrow">Source code</p>
+    <h1>Repositories</h1>
+  </header>
+  <div class="body cols-2 repo-body">
+    <div class="card">
+      <h2>Demo repo</h2>
+      <a class="repo-url" href="https://github.com/RMalone8/llm-d-sc-demo">https://github.com/RMalone8/llm-d-sc-demo</a>
+    </div>
+    <div class="card">
+      <h2>llm-d-sc</h2>
+      <a class="repo-url" href="https://github.com/llm-d-incubation/llm-d-semantic-classifier">https://github.com/llm-d-incubation/llm-d-semantic-classifier</a>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<nav class="nav" aria-label="Slide navigation">
+  <button id="prev" title="Previous slide">&#8249;</button>
+  <span id="counter" hidden>1 / 4</span>
+  <button id="next" title="Next slide">&#8250;</button>
+</nav>
+
+<script>
+const slides = [...document.querySelectorAll('.slide')];
+const counter = document.querySelector('#counter');
+let current = 0;
+function fit(slide) {
+  const body = slide.querySelector('.body');
+  if (!body) return;
+  body.style.transform = '';
+  if (!body.clientHeight) return;
+  const ratio = Math.min(body.clientHeight / body.scrollHeight, 1);
+  if (ratio < 1) body.style.transform = `scale(${ratio.toFixed(3)})`;
+}
+function show(index) {
+  current = (index + slides.length) % slides.length;
+  slides.forEach((slide, at) => { slide.hidden = at !== current; });
+  counter.hidden = current === 0;
+  counter.textContent = `${current} / ${slides.length - 1}`;
+  history.replaceState(null, '', `#${current + 1}`);
+  slides.forEach(fit);
+}
+document.querySelector('#prev').addEventListener('click', () => show(current - 1));
+document.querySelector('#next').addEventListener('click', () => show(current + 1));
+addEventListener('keydown', (event) => {
+  if (['ArrowRight', ' ', 'PageDown'].includes(event.key)) show(current + 1);
+  if (['ArrowLeft', 'PageUp'].includes(event.key)) show(current - 1);
+});
+addEventListener('resize', () => slides.forEach(fit));
+show(Number(location.hash.slice(1)) - 1 || 0);
+</script>
+</body>
+</html>
