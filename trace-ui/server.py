@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import gzip
-import http.client
 import json
 import os
 import sqlite3
@@ -15,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
-from urllib.request import HTTPHandler, Request, build_opener, urlopen
+from urllib.request import Request, urlopen
 
 DATABASE = Path(os.environ.get("TRACE_DB_PATH", "/data/traces.db"))
 UPSTREAM = os.environ.get("PRAXIS_UPSTREAM", "http://praxis:8080").rstrip("/")
@@ -50,26 +49,6 @@ POOLS = {
 TRAFFIC_DEPLOYMENT = os.environ.get("TRACE_TRAFFIC_DEPLOYMENT", "praxis-traffic-gen")
 TRAFFIC_LABEL = os.environ.get("TRACE_TRAFFIC_LABEL", TRAFFIC_DEPLOYMENT)
 DB_LOCK = threading.Lock()
-# The backend relays reach a predictor Service that resolves to its pod IPs, so the
-# address a connection lands on says which replica answered. Capture it per thread.
-_PEER = threading.local()
-
-
-class _PeerConnection(http.client.HTTPConnection):
-    def connect(self) -> None:
-        super().connect()
-        try:
-            _PEER.ip = self.sock.getpeername()[0]
-        except OSError:
-            _PEER.ip = None
-
-
-class _PeerHandler(HTTPHandler):
-    def http_open(self, req: Request):
-        return self.do_open(_PeerConnection, req)
-
-
-OPENER = build_opener(_PeerHandler)
 HOP_BY_HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers", "transfer-encoding", "upgrade", "host", "content-length"}
 
 
@@ -102,12 +81,8 @@ def db() -> sqlite3.Connection:
     connection.execute("""CREATE TABLE IF NOT EXISTS hops (
         id INTEGER PRIMARY KEY AUTOINCREMENT, trace_id TEXT NOT NULL, route TEXT NOT NULL,
         arrived_at REAL NOT NULL, ttfb_ms INTEGER, total_ms INTEGER, status INTEGER,
-        classifier_us INTEGER, error TEXT, replica TEXT, peer_ip TEXT
+        classifier_us INTEGER, error TEXT
     )""")
-    hop_columns = {row[1] for row in connection.execute("PRAGMA table_info(hops)")}
-    for column in ("replica", "peer_ip"):
-        if column not in hop_columns:
-            connection.execute(f"ALTER TABLE hops ADD COLUMN {column} TEXT")
     connection.execute("CREATE INDEX IF NOT EXISTS hops_trace ON hops (trace_id)")
     connection.execute("CREATE TABLE IF NOT EXISTS arch_state (ts REAL PRIMARY KEY, state TEXT NOT NULL)")
     return connection
@@ -238,21 +213,8 @@ def record_hop(request_id: str, route: str, classification: str | None) -> None:
         )
 
 
-def replica_for(route: str, ip: str | None) -> str | None:
-    """Name of the pod of this route's pool that owns ip, from the latest polled state."""
-    if not ip:
-        return None
-    with STATE_LOCK:
-        state = LIVE_STATE["state"] or {}
-    for pod in state.get("pools", {}).get(route, {}).get("pods", []):
-        if pod.get("ip") == ip:
-            return pod["name"]
-    return None
-
-
 def record_hop_timing(trace_id: str, route: str, arrived_at: float, started: float, ttfb_ms: int | None,
-                      status: int | None, classifier_us: str | None, error: str | None = None,
-                      peer_ip: str | None = None) -> None:
+                      status: int | None, classifier_us: str | None, error: str | None = None) -> None:
     """Store how long one backend hop took: time to response headers and total time.
 
     A request that fails over has one row per backend it tried, including the
@@ -266,10 +228,10 @@ def record_hop_timing(trace_id: str, route: str, arrived_at: float, started: flo
         classifier = None
     with DB_LOCK, db() as connection:
         connection.execute(
-            "INSERT INTO hops (trace_id, route, arrived_at, ttfb_ms, total_ms, status, classifier_us, error, "
-            "replica, peer_ip) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO hops (trace_id, route, arrived_at, ttfb_ms, total_ms, status, classifier_us, error) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (trace_id, route, arrived_at, ttfb_ms, round((time.monotonic() - started) * 1000),
-             status, classifier, error, replica_for(route, peer_ip), peer_ip),
+             status, classifier, error),
         )
 
 
@@ -409,7 +371,7 @@ def read_pools() -> dict:
             if status.get("phase") not in ("Pending", "Running"):
                 continue
             ready = any(c.get("type") == "Ready" and c.get("status") == "True" for c in status.get("conditions", []))
-            pods.append({"name": item["metadata"]["name"], "ip": status.get("podIP"), "ready": ready,
+            pods.append({"name": item["metadata"]["name"], "ready": ready,
                          "terminating": bool(item["metadata"].get("deletionTimestamp"))})
         pools[route] = {"desired": spec.get("spec", {}).get("replicas"), "pods": pods}
     return pools
@@ -487,14 +449,14 @@ def traces() -> list[dict]:
     if ids:
         with DB_LOCK, db() as connection:
             hop_rows = connection.execute(
-                f"SELECT trace_id, route, arrived_at, ttfb_ms, total_ms, status, classifier_us, error, replica "
+                f"SELECT trace_id, route, arrived_at, ttfb_ms, total_ms, status, classifier_us, error "
                 f"FROM hops WHERE trace_id IN ({','.join('?' * len(ids))}) ORDER BY arrived_at", ids).fetchall()
         started = {row[0]: row[1] for row in rows}
-        for trace_key, route, arrived_at, ttfb, total, status, classifier, error, replica in hop_rows:
+        for trace_key, route, arrived_at, ttfb, total, status, classifier, error in hop_rows:
             hops.setdefault(trace_key, []).append({
                 "route": route, "offset_ms": round((arrived_at - started[trace_key]) * 1000),
                 "ttfb_ms": ttfb, "total_ms": total, "status": status,
-                "classifier_ms": round(classifier / 1000) if classifier is not None else None, "error": error, "replica": replica})
+                "classifier_ms": round(classifier / 1000) if classifier is not None else None, "error": error})
     keys = ("id", "started_at", "completed_at", "method", "path", "request_id", "status", "classification", "route", "fallback", "duration_ms", "response_headers", "error", "question", "response", "response_tokens", "response_tokens_est")
     return [{**dict(zip(keys, row)), "response_headers": json.loads(row[11]), "hops": hops.get(row[0], [])} for row in rows]
 
@@ -615,9 +577,8 @@ class Handler(BaseHTTPRequestHandler):
         classifier_us = self.headers.get("X-Llm-D-Sc-Latency-Us")
         upstream_request = Request(upstream + path, data=body if body else None, headers=headers, method=self.command)
         response = None
-        _PEER.ip = None
         try:
-            response = OPENER.open(upstream_request, timeout=5 if is_probe else 600)
+            response = urlopen(upstream_request, timeout=5 if is_probe else 600)
         except HTTPError as error:
             response = error
         except (URLError, TimeoutError, OSError) as error:
@@ -630,7 +591,6 @@ class Handler(BaseHTTPRequestHandler):
             self.json(502, {"error": {"message": "Upstream unavailable", "type": "upstream_error"}})
             return
         ttfb_ms = round((time.monotonic() - started) * 1000)
-        peer_ip = getattr(_PEER, "ip", None)
         response_headers = dict(response.headers.items())
         if is_probe:
             record_health(route, response.status, round((time.monotonic() - started) * 1000), None)
@@ -663,8 +623,7 @@ class Handler(BaseHTTPRequestHandler):
                                response=extract_response(self.path, response_headers, bytes(captured)))
         finally:
             if timed:
-                record_hop_timing(hop_trace_id, route, arrived_at, started, ttfb_ms, response.status, classifier_us,
-                                  peer_ip=peer_ip)
+                record_hop_timing(hop_trace_id, route, arrived_at, started, ttfb_ms, response.status, classifier_us)
 
 
 class RelayServer(ThreadingHTTPServer):
@@ -691,7 +650,7 @@ PAGE = r'''<!doctype html>
 <section class="graphic"><div class="canvas"><svg viewBox="0 0 980 690" role="img" aria-labelledby="diagram-title diagram-desc">
 <title id="diagram-title">Live Praxis request routing</title><desc id="diagram-desc">Open WebUI sends a request to Praxis. Praxis calls llm-d-sc for classification and routes the request to either the CPU or GPU vLLM service.</desc>
 <defs><marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0,0 L10,3 L0,6 z" fill="#64b5ff"/></marker><marker id="arrow-cyan" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0,0 L10,3 L0,6 z" fill="#55e6d0"/></marker><marker id="arrow-red" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0,0 L10,3 L0,6 z" fill="#ff4d5e"/></marker></defs>
-<path id="packet-source" class="packet-path" d="M490 124 V180"/><path id="packet-classify" class="packet-path" d="M623 225 H720"/><path id="packet-result" class="packet-path" d="M720 256 H623"/><path id="packet-cpu" class="packet-path" d="M490 292 V350 H245 V598"/><path id="packet-gpu" class="packet-path" d="M490 292 V350 H735 V598"/><path id="packet-pod" class="packet-path" d="M0 0"/><circle id="request-dot" class="packet" r="7" fill="#64b5ff"/>
+<path id="packet-source" class="packet-path" d="M490 124 V180"/><path id="packet-classify" class="packet-path" d="M623 225 H720"/><path id="packet-result" class="packet-path" d="M720 256 H623"/><path id="packet-cpu" class="packet-path" d="M490 292 V350 H245 V598"/><path id="packet-gpu" class="packet-path" d="M490 292 V350 H735 V598"/><circle id="request-dot" class="packet" r="7" fill="#64b5ff"/>
 
 <text x="0" y="30" class="label">REQUEST</text><rect x="290" y="48" width="400" height="76" rx="18" class="box-blue"/><text x="330" y="84" class="title">Open WebUI / client</text><text x="330" y="105" class="small">OpenAI-compatible POST /v1/chat/completions</text><path id="flow-source" d="M490 124 V180" class="flow"/>
 
@@ -699,26 +658,21 @@ PAGE = r'''<!doctype html>
 
 <path id="flow-cpu" d="M490 292 V350 H245 V382" class="flow cpu-path"/><path id="flow-gpu" d="M490 292 V350 H735 V382" class="flow gpu-path"/><text x="0" y="370" class="label">INFERENCE ROUTING</text><rect x="90" y="386" width="310" height="106" rx="18" class="box-violet"/><text x="116" y="425" class="title">vLLM CPU service</text><text x="116" y="450" class="small">SIMPLE / MEDIUM requests</text><rect x="580" y="386" width="310" height="106" rx="18" class="box-amber"/><text x="606" y="425" class="title">vLLM GPU service</text><text x="606" y="450" class="small">COMPLEX / REASONING requests</text><path id="flow-cpu-pod" d="M245 492 V550" class="flow cpu-path"/><path id="flow-gpu-pod" d="M735 492 V550" class="flow gpu-path"/>
 
-<text x="0" y="536" class="label">OPENSHIFT WORKLOADS</text><text id="state-note" x="490" y="12" text-anchor="middle"></text><rect x="55" y="550" width="405" height="120" rx="20" class="cluster"/><text x="82" y="582" class="cluster-label">CPU pool</text><text id="pool-cpu-count" x="440" y="582" text-anchor="end" class="small"></text><g id="arrows-cpu"></g><g id="pods-cpu"></g><rect x="520" y="550" width="405" height="120" rx="20" class="cluster"/><text x="547" y="582" class="cluster-label">GPU pool</text><text id="pool-gpu-count" x="905" y="582" text-anchor="end" class="small"></text><g id="arrows-gpu"></g><g id="pods-gpu"></g>
+<text x="0" y="536" class="label">OPENSHIFT WORKLOADS</text><text id="state-note" x="490" y="12" text-anchor="middle"></text><rect x="55" y="550" width="405" height="120" rx="20" class="cluster"/><text x="82" y="582" class="cluster-label">CPU pool</text><text id="pool-cpu-count" x="440" y="582" text-anchor="end" class="small"></text><g id="pods-cpu"></g><rect x="520" y="550" width="405" height="120" rx="20" class="cluster"/><text x="547" y="582" class="cluster-label">GPU pool</text><text id="pool-gpu-count" x="905" y="582" text-anchor="end" class="small"></text><g id="pods-gpu"></g>
 </svg></div><footer class="legend"><span><i class="swatch"></i> request / routing path</span><span><i class="swatch cyan"></i> classifier request + result</span></footer></section>
 
 <section class="traces"><div class="section-heading"><h2>Recent requests <small id="count"></small></h2><div class="actions"><span id="traffic-status" class="traffic-status unknown"><i></i>Traffic: …</span><button id="traffic-toggle" type="button" disabled>Simulate Traffic</button><button id="clear-recents" type="button">Clear Recents</button></div></div><table><thead><tr><th>Time</th><th>Request</th><th>Classification</th><th>Destination</th><th>Status</th><th>Duration</th><th>Response</th></tr></thead><tbody id="traces"><tr><td colspan="6">Waiting for a request…</td></tr></tbody></table></section>
 </main><div id="drawer-backdrop" class="drawer-backdrop"></div><aside id="question-drawer" class="drawer" aria-hidden="true" aria-labelledby="question-title"><div class="drawer-header"><h2 id="question-title">Question</h2><button id="drawer-close" class="drawer-close" type="button" aria-label="Close question">×</button></div><div id="question-meta" class="drawer-meta"></div><p id="question-text" class="question-text"></p></aside><script>
-const $=id=>document.getElementById(id),dot=$('request-dot'),paths={source:$('packet-source'),classify:$('packet-classify'),result:$('packet-result'),cpu:$('packet-cpu'),gpu:$('packet-gpu'),pod:$('packet-pod')},flows={source:[$('flow-source')],classify:[$('flow-classify'),$('flow-result')],cpu:[$('flow-cpu'),$('flow-cpu-pod')],gpu:[$('flow-gpu'),$('flow-gpu-pod')]};let last='',lastAnimated='',selectedId='',dismissedThroughId='',traceItems=[],animating=false,animationGeneration=0,openTraces=new Set();
+const $=id=>document.getElementById(id),dot=$('request-dot'),paths={source:$('packet-source'),classify:$('packet-classify'),result:$('packet-result'),cpu:$('packet-cpu'),gpu:$('packet-gpu')},flows={source:[$('flow-source')],classify:[$('flow-classify'),$('flow-result')],cpu:[$('flow-cpu'),$('flow-cpu-pod')],gpu:[$('flow-gpu'),$('flow-gpu-pod')]};let last='',lastAnimated='',selectedId='',dismissedThroughId='',traceItems=[],animating=false,animationGeneration=0,openTraces=new Set();
 const questionDrawer=$('question-drawer'),drawerBackdrop=$('drawer-backdrop');
 function esc(x){return String(x??'—').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 function isGpu(t){return t.route?t.route.toLowerCase().includes('gpu'):['COMPLEX','REASONING'].includes((t.classification||'').toUpperCase())}
-function timelineHtml(t){const hops=t.hops||[];if(!hops.length||!t.duration_ms)return'';const segs=[];let cursor=0;hops.forEach((h,i)=>{const gap=Math.max(0,h.offset_ms-cursor);if(i===0){const c=h.classifier_ms!=null?Math.min(h.classifier_ms,gap):0;if(c)segs.push({k:'classify',l:'classifier',ms:c});segs.push({k:'praxis',l:c?'Praxis':'Praxis + classifier',ms:gap-c})}else segs.push({k:'gap',l:'failover gap',ms:gap});const bad=h.status==null||h.status>=500||h.status===429;segs.push({k:bad?'fail':'backend',l:h.route+(bad?' (failed)':''),ms:h.total_ms||0,note:(h.ttfb_ms!=null?'first byte '+h.ttfb_ms+' ms':(h.error||'no response'))+(h.replica?' · replica '+h.replica.replace(/^vllm-(cpu|gpu)-predictor-/,''):'')});cursor=h.offset_ms+(h.total_ms||0)});segs.push({k:'praxis',l:'Praxis return',ms:Math.max(0,t.duration_ms-cursor)});return`<div class="tl">${segs.map(x=>`<i class="k-${x.k}" style="flex:${Math.max(x.ms,0)}" title="${esc(x.l)} ${x.ms} ms"></i>`).join('')}</div>${segs.map(x=>`<span class="tl-line"><i class="sw k-${x.k}"></i>${esc(x.l)} <b>${x.ms} ms</b>${x.note?' · '+esc(x.note):''}</span>`).join('')}`}
+function timelineHtml(t){const hops=t.hops||[];if(!hops.length||!t.duration_ms)return'';const segs=[];let cursor=0;hops.forEach((h,i)=>{const gap=Math.max(0,h.offset_ms-cursor);if(i===0){const c=h.classifier_ms!=null?Math.min(h.classifier_ms,gap):0;if(c)segs.push({k:'classify',l:'classifier',ms:c});segs.push({k:'praxis',l:c?'Praxis':'Praxis + classifier',ms:gap-c})}else segs.push({k:'gap',l:'failover gap',ms:gap});const bad=h.status==null||h.status>=500||h.status===429;segs.push({k:bad?'fail':'backend',l:h.route+(bad?' (failed)':''),ms:h.total_ms||0,note:h.ttfb_ms!=null?'first byte '+h.ttfb_ms+' ms':(h.error||'no response')});cursor=h.offset_ms+(h.total_ms||0)});segs.push({k:'praxis',l:'Praxis return',ms:Math.max(0,t.duration_ms-cursor)});return`<div class="tl">${segs.map(x=>`<i class="k-${x.k}" style="flex:${Math.max(x.ms,0)}" title="${esc(x.l)} ${x.ms} ms"></i>`).join('')}</div>${segs.map(x=>`<span class="tl-line"><i class="sw k-${x.k}"></i>${esc(x.l)} <b>${x.ms} ms</b>${x.note?' · '+esc(x.note):''}</span>`).join('')}`}
 function pathText(t){if(!(t.route||t.classification))return'Open WebUI → Praxis (routing metadata unavailable)';return`Open WebUI → Praxis → llm-d-sc → ${isGpu(t)?'vLLM GPU service → vllm-gpu-predictor pod':'vLLM CPU service → vllm-cpu-predictor pod'}`}
-let current=null;
-function servedReplica(t){const h=t&&t.hops&&t.hops[t.hops.length-1];return h&&h.status&&h.status<500&&h.replica||null}
-function replicaArrow(t){const r=servedReplica(t);return r?document.querySelector('.flow[data-pod="'+CSS.escape(r)+'"]'):null}
-function highlightReplica(t){document.querySelectorAll('.flow[data-pod]').forEach(a=>a.classList.remove('selected'));const a=replicaArrow(t);if(a)a.classList.add('selected')}
-function finalPath(t){const key=isGpu(t)?'gpu':'cpu',a=replicaArrow(t);if(!a)return paths[key];paths.pod.setAttribute('d',`M490 292 V350 H${POOLS[key].sx} V544 H${a.dataset.cx} V598`);return paths.pod}
-function highlight(t){current=t;Object.values(flows).flat().forEach(path=>path.classList.remove('selected'));highlightReplica(t);if(!t)return;flows.source.forEach(path=>path.classList.add('selected'));if(t.route||t.classification){flows.classify.forEach(path=>path.classList.add('selected'));flows[isGpu(t)?'gpu':'cpu'].forEach(path=>path.classList.add('selected'))}}
+function highlight(t){Object.values(flows).flat().forEach(path=>path.classList.remove('selected'));if(!t)return;flows.source.forEach(path=>path.classList.add('selected'));if(t.route||t.classification){flows.classify.forEach(path=>path.classList.add('selected'));flows[isGpu(t)?'gpu':'cpu'].forEach(path=>path.classList.add('selected'))}}
 async function travel(path,color,duration){const length=path.getTotalLength(),started=performance.now();dot.style.display='block';dot.setAttribute('fill',color);dot.style.color=color;return new Promise(resolve=>{function frame(now){const progress=Math.min((now-started)/duration,1),point=path.getPointAtLength(length*progress);dot.setAttribute('cx',point.x);dot.setAttribute('cy',point.y);if(progress<1)requestAnimationFrame(frame);else resolve()}requestAnimationFrame(frame)})}
-async function animate(t){if(!t||animating||matchMedia('(prefers-reduced-motion: reduce)').matches)return;const generation=animationGeneration;animating=true;await travel(paths.source,'#64b5ff',450);if(generation!==animationGeneration){animating=false;return}if(t.route||t.classification){await travel(paths.classify,'#55e6d0',450);if(generation!==animationGeneration){animating=false;return}await travel(paths.result,'#55e6d0',450);if(generation!==animationGeneration){animating=false;return}await travel(finalPath(t),isGpu(t)?'#ffc76a':'#ad9cff',900)}await sleep(300);dot.style.display='none';animating=false}
+async function animate(t){if(!t||animating||matchMedia('(prefers-reduced-motion: reduce)').matches)return;const generation=animationGeneration;animating=true;await travel(paths.source,'#64b5ff',450);if(generation!==animationGeneration){animating=false;return}if(t.route||t.classification){await travel(paths.classify,'#55e6d0',450);if(generation!==animationGeneration){animating=false;return}await travel(paths.result,'#55e6d0',450);if(generation!==animationGeneration){animating=false;return}await travel(paths[isGpu(t)?'gpu':'cpu'],isGpu(t)?'#ffc76a':'#ad9cff',900)}await sleep(300);dot.style.display='none';animating=false}
 function render(){const items=traceItems;$('count').textContent=`(${items.length} saved)`;$('traces').innerHTML=items.length?items.map(t=>`<tr data-trace-id="${esc(t.id)}" tabindex="0" class="${t.id===selectedId?'selected-row':''}"><td>${new Date(t.started_at*1000).toLocaleTimeString()}</td><td><span class="tag">${esc(t.method)}</span> ${esc(t.path)}${t.question?`<button class="question-button" type="button" data-question-id="${esc(t.id)}">View question</button>`:'<span class="no-question">question unavailable</span>'}<details${openTraces.has(t.id)?' data-r="1" open':''}><summary>trace ${esc(t.request_id.slice(0,8))}</summary><div class="trace-detail"><span><b>Path:</b> ${esc(pathText(t))}</span><span><b>Request ID:</b> ${esc(t.request_id)}</span><span><b>Classification:</b> ${esc(t.classification||'label not emitted')}</span><span><b>Destination:</b> ${esc(t.route||'not emitted')}</span><span><b>Result:</b> ${esc(t.status||'in flight')} · ${t.duration_ms?esc(t.duration_ms+' ms'):'in progress'}${t.fallback?' · fallback':''}</span>${timelineHtml(t)}${t.error?`<span><b>Error:</b> ${esc(t.error)}</span>`:''}</div></details></td><td>${esc(t.classification||'not emitted')}</td><td class="${t.route?(isGpu(t)?'gpu':'cpu'):'unknown'}">${t.route?esc(t.route):(t.status?'unavailable':'routing…')}${t.fallback?'<small class="fellback">fell back</small>':t.route&&!t.classification&&t.status&&!t.error?'<small class="defaulted">no label &middot; default</small>':''}</td><td>${esc(t.status||'in flight')}</td><td>${t.duration_ms?esc(t.duration_ms+' ms'):'—'}</td><td>${t.response?`<button class="question-button" type="button" data-response-id="${esc(t.id)}">${t.response_tokens?(t.response_tokens_est?'~':'')+esc(t.response_tokens)+' tokens':'View'}</button>`:'<span class="no-question">—</span>'}</td></tr>`).join(''):'<tr><td colspan="7">Waiting for a request…</td></tr>'}
 function syncSelection(){document.querySelectorAll('tr[data-trace-id]').forEach(row=>row.classList.toggle('selected-row',row.dataset.traceId===selectedId))}
 function clearSelection(){selectedId='';dismissedThroughId=(traceItems.find(t=>t.status&&(t.route||t.classification))||{}).id||'';animationGeneration++;dot.style.display='none';highlight(null);syncSelection();unpinState()}
@@ -736,7 +690,7 @@ let traffic={state:'unknown'};
 function renderTraffic(){const s=traffic.state,names={stopped:'Stopped',initializing:'Initializing',ready:'Ready',terminating:'Terminating',unavailable:'Unavailable'},el=$('traffic-status'),b=$('traffic-toggle'),running=s==='initializing'||s==='ready';el.className='traffic-status '+s;el.title=traffic.error||'';el.innerHTML='<i></i>Traffic: '+esc(names[s]||'…');b.textContent=running?'Stop Traffic':'Simulate Traffic';b.disabled=!(s==='stopped'||running)}
 async function loadTraffic(){try{traffic=await fetch('/_trace/api/traffic',{cache:'no-store'}).then(r=>r.json())}catch(e){traffic={state:'unavailable',error:'trace API unavailable'}}renderTraffic()}
 $('traffic-toggle').addEventListener('click',async()=>{const b=$('traffic-toggle'),running=traffic.state==='initializing'||traffic.state==='ready';b.disabled=true;try{traffic=await fetch('/_trace/api/traffic',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:running?'stop':'start'})}).then(r=>r.json())}catch(e){traffic={state:'unavailable',error:'trace API unavailable'}}renderTraffic()});
-const POOLS={cpu:{route:'vllm-cpu',sx:245,x:80,cls:'box-violet',name:'vllm-cpu-predictor'},gpu:{route:'vllm-gpu',sx:735,x:545,cls:'box-amber',name:'vllm-gpu-predictor'}};
+const POOLS={cpu:{route:'vllm-cpu',x:80,cls:'box-violet',name:'vllm-cpu-predictor'},gpu:{route:'vllm-gpu',x:545,cls:'box-amber',name:'vllm-gpu-predictor'}};
 let liveState=null,pinned=false,pinSeq=0;
 function podList(cfg,state){const pool=state&&state.pools?state.pools[cfg.route]:null;
 if(!pool)return{pods:[{kind:'unknown',title:cfg.name,sub:'state unknown'}],count:''};
@@ -748,15 +702,13 @@ for(let i=0;i<n;i++){const p=list[i];
 if(!p){pods.push({kind:'pending',title:cfg.name,sub:'starting…'});continue}
 const suffix=p.name.startsWith(cfg.name+'-')?p.name.slice(cfg.name.length+1):p.name,up=p.ready&&!p.terminating&&probe!==false;if(up)ready++;
 const sub=p.terminating?'terminating':!p.ready?'not ready':probe===false?'health check failing':'healthy';
-pods.push({name:p.name,kind:up?'up':(p.terminating?'pending':'down'),title:cfg.name,sub:suffix+' · '+sub})}
+pods.push({kind:up?'up':(p.terminating?'pending':'down'),title:cfg.name,sub:suffix+' · '+sub})}
 return{pods,count:ready+'/'+desired+' healthy'}}
 function renderPool(key,state){const cfg=POOLS[key],{pods,count}=podList(cfg,state),W=355,gap=10,shown=pods.slice(0,3),more=pods.length-shown.length,w=(W-gap*(shown.length-1))/shown.length;
 $('pool-'+key+'-count').textContent=count;
-const multi=shown.filter(p=>p.name&&p.kind==='up').length>1;$('flow-'+key+'-pod').style.display=multi?'none':'';
-$('arrows-'+key).innerHTML=multi?shown.map((p,i)=>{if(!(p.name&&p.kind==='up'))return'';const cx=cfg.x+i*(w+gap)+w/2,ax=Math.min(Math.max(cx,cfg.x+85),cfg.x+270);return`<path class="flow ${key}-path" data-pod="${esc(p.name)}" data-cx="${ax}" d="M${cfg.sx} 492 V544 H${ax} V598"/>`}).join(''):'';
 $('pods-'+key).innerHTML=shown.map((p,i)=>{const x=cfg.x+i*(w+gap),up=p.kind==='up',dot=up?'#55e6a0':p.kind==='down'?'#ff4d5e':p.kind==='pending'?'#ffc76a':'#6b7c90',dashed=['zero','pending','unknown'].includes(p.kind)?' dashed':'';
 return`<g><rect x="${x}" y="598" width="${w}" height="50" rx="12" class="${up?cfg.cls:'box-grey'}${dashed}"/><circle cx="${x+16}" cy="623" r="5" fill="${dot}"/><text x="${x+30}" y="619" class="pod-title${up?'':' dim'}">${w>=170?esc(p.title):'pod'}</text><text x="${x+30}" y="637" class="pod-sub">${esc(p.sub)}</text></g>`}).join('')+(more>0?`<text x="${cfg.x+W}" y="662" text-anchor="end" class="small">+${more} more</text>`:'')}
-function renderState(state,note){renderPool('cpu',state);renderPool('gpu',state);$('state-note').textContent=note||'';highlightReplica(current)}
+function renderState(state,note){renderPool('cpu',state);renderPool('gpu',state);$('state-note').textContent=note||''}
 async function loadState(){try{const d=await fetch('/_trace/api/state',{cache:'no-store'}).then(r=>r.json());liveState=d.state;if(!pinned)renderState(d.state,'')}catch(e){}}
 async function pinState(t){const seq=++pinSeq;try{const d=await fetch('/_trace/api/state?at='+t.started_at,{cache:'no-store'}).then(r=>r.json());if(seq!==pinSeq)return;pinned=true;const at=ts=>new Date(ts*1000).toLocaleTimeString();renderState(d.state,d.state?'cluster state when sent · '+at(t.started_at):'no state recorded for '+at(t.started_at)+' · history starts '+(d.history_starts?at(d.history_starts):'—'))}catch(e){}}
 function unpinState(){pinSeq++;pinned=false;renderState(liveState,'')}
