@@ -3,6 +3,9 @@ insecure_options:
 
 admin:
   address: "127.0.0.1:9901"
+  # Praxis 0.7 serves /healthy, /ready and /metrics here; `address` only
+  # serves /api/*. Loopback is enough: the probes exec wget inside the pod.
+  metrics_address: "127.0.0.1:9902"
 
 # Per-peer circuit breaker for the failover sub-requests below. It counts
 # connect/io/deadline failures only; an HTTP 502 relayed by trace-ui does not

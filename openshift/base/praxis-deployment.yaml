@@ -16,10 +16,10 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: praxis
-          image: quay.io/rmalone/praxis-llm-d-sc:latest
-          # Avoid the image's broken -c entrypoint and select the mounted file
-          # through the environment instead.
-          command: ["praxis"]
+          image: quay.io/rmalone/praxis-ai-llm-d-sc:v0.7.0
+          # The image's binary is praxis-ai (Praxis AI v0.7.0 plus llm_d_sc).
+          # Select the mounted config through the environment.
+          command: ["praxis-ai"]
           env:
             - name: PRAXIS_CONFIG
               value: /etc/praxis/config.yaml
@@ -32,11 +32,11 @@ spec:
               protocol: TCP
           readinessProbe:
             exec:
-              command: ["wget", "-qO-", "http://127.0.0.1:9901/ready"]
+              command: ["wget", "-qO-", "http://127.0.0.1:9902/ready"]
             initialDelaySeconds: 3
           livenessProbe:
             exec:
-              command: ["wget", "-qO-", "http://127.0.0.1:9901/healthy"]
+              command: ["wget", "-qO-", "http://127.0.0.1:9902/healthy"]
             initialDelaySeconds: 5
           resources:
             requests:
