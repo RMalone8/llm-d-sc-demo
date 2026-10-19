@@ -8,5 +8,5 @@ resources:
   - ../../base
   - vllm-cpu-runtime.yaml
   - vllm-cuda-runtime.yaml
-  - vllm-cpu.yaml
-  - vllm-gpu.yaml
+  - vllm-cpu-inferenceservice.yaml
+  - vllm-gpu-inferenceservice.yaml

@@ -4,6 +4,8 @@ metadata:
   name: trace-ui
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: trace-ui
@@ -17,7 +19,7 @@ spec:
       serviceAccountName: trace-ui
       containers:
         - name: trace-ui
-          image: quay.io/rmalone/praxis-trace-ui:v7
+          image: quay.io/rmalone/praxis-trace-ui:v14
           env:
             - name: PRAXIS_UPSTREAM
               value: http://praxis:8080

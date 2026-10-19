@@ -1,6 +1,7 @@
-# Read-only access for trace-ui to draw the live architecture diagram: it lists the
-# predictor pods and reads each predictor Deployment's replica count. Namespace
-# scoped, no write verbs, no access to secrets.
+# Access for trace-ui to draw the live architecture diagram: it lists the predictor
+# pods and reads each predictor Deployment's replica count. Namespace scoped, no
+# access to secrets. The only write is scaling the traffic generator, pinned to
+# that one Deployment by name, for the Simulate Traffic button.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -17,6 +18,10 @@ rules:
   - apiGroups: ["apps"]
     resources: ["deployments"]
     verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    resourceNames: ["praxis-traffic-gen"]
+    verbs: ["get", "patch", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

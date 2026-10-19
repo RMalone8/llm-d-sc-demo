@@ -3,30 +3,11 @@ insecure_options:
 
 admin:
   address: "127.0.0.1:9901"
-  # Praxis 0.7 serves /healthy, /ready and /metrics here; `address` only
-  # serves /api/*. Loopback is enough: the probes exec wget inside the pod.
   metrics_address: "127.0.0.1:9902"
 
-# Active health checks. Praxis only probes clusters in this top-level list, not
-# the ones declared inline in the load_balancer filters below; those look up
-# their health state here by name, so names and endpoints must match. Probes go
-# through the trace-ui relays, which forward GET /health to vLLM and record each
-# result for the Health tab. State is observed only: with one endpoint per
-# cluster Praxis keeps routing to it even when unhealthy, and failover is still
-# driven by the on_result rules in the router chain.
 clusters:
-  - name: vllm-cpu
-    endpoints: ["trace-ui:8081"]
-    health_check:
-      type: http
-      path: /health
-      expected_status: 200
-      interval_ms: 5000
-      timeout_ms: 2000
-      healthy_threshold: 2
-      unhealthy_threshold: 2
-  - name: vllm-gpu
-    endpoints: ["trace-ui:8082"]
+  - name: vllm-any
+    endpoints: ["trace-ui:8081", "trace-ui:8082"]
     health_check:
       type: http
       path: /health
@@ -36,9 +17,6 @@ clusters:
       healthy_threshold: 2
       unhealthy_threshold: 2
 
-# Per-peer circuit breaker for the failover sub-requests below. It counts
-# connect/io/deadline failures only; an HTTP 502 relayed by trace-ui does not
-# count, so it opens when a relay is unreachable or hangs past step_timeout_ms.
 runtime:
   subrequest_circuit_breaker:
     consecutive_failures: 3
@@ -67,15 +45,10 @@ filter_chains:
             value: application/json
         body: >-
           {"object":"list","data":[{"id":"Semantic-Qwen","object":"model","created":0,"owned_by":"praxis"}]}
-      # Must stay last in the chain. Step 1 classifies and routes; if the
-      # chosen backend fails, step 2 replays the same body against the GPU.
       - filter: iterative_request_router
         initial_step: classify-and-route
         max_iterations: 3
-        # End-to-end deadline, including the response. The 30s default would
-        # cut CPU generations short.
         timeout_ms: 300000
-        # Bounds how long a hung backend delays the GPU fallback.
         step_timeout_ms: 120000
         steps:
           - name: classify-and-route
@@ -98,32 +71,21 @@ filter_chains:
                 on_unavailable: default_cluster
                 on_resource_exhausted: default_cluster
                 emit_headers: true
-              # Health state for these clusters comes from the top-level
-              # `clusters:` list above, matched by name.
               - filter: load_balancer
                 clusters:
                   - name: vllm-gpu
                     endpoints: ["trace-ui:8082"]
                   - name: vllm-cpu
                     endpoints: ["trace-ui:8081"]
-            # trace-ui answers 502 when a predictor is unreachable, so the
-            # status rule is what catches a down CPU predictor. The transport
-            # rule covers the relay itself being unreachable or the circuit
-            # being open. A COMPLEX request that fails on the GPU is also
-            # retried once on the GPU (the rules cannot tell which cluster
-            # failed).
             on_result:
               - origin: transport
-                next: gpu-fallback
+                next: failover
               - status: [429, 500, 502, 503, 504]
-                next: gpu-fallback
+                next: failover
               - default: true
                 done: true
-          - name: gpu-fallback
+          - name: failover
             filters:
-              # A transitioned step starts with empty headers, so restore the
-              # content type vLLM requires. X-Praxis-Fallback lets trace-ui flag
-              # the request as a fallback.
               - filter: headers
                 request_set:
                   - name: Content-Type
@@ -134,11 +96,11 @@ filter_chains:
               - filter: router
                 routes:
                   - path_prefix: "/"
-                    cluster: vllm-gpu
+                    cluster: vllm-any
               - filter: load_balancer
                 clusters:
-                  - name: vllm-gpu
-                    endpoints: ["trace-ui:8082"]
+                  - name: vllm-any
+                    endpoints: ["trace-ui:8081", "trace-ui:8082"]
             on_result:
               - default: true
                 done: true
