@@ -1,0 +1,31 @@
+# Read-only access for trace-ui to draw the live architecture diagram: it lists the
+# predictor pods and reads each predictor Deployment's replica count. Namespace
+# scoped, no write verbs, no access to secrets.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: trace-ui
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: trace-ui-reader
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: trace-ui-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: trace-ui-reader
+subjects:
+  - kind: ServiceAccount
+    name: trace-ui

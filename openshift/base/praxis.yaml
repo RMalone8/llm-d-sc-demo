@@ -7,6 +7,35 @@ admin:
   # serves /api/*. Loopback is enough: the probes exec wget inside the pod.
   metrics_address: "127.0.0.1:9902"
 
+# Active health checks. Praxis only probes clusters in this top-level list, not
+# the ones declared inline in the load_balancer filters below; those look up
+# their health state here by name, so names and endpoints must match. Probes go
+# through the trace-ui relays, which forward GET /health to vLLM and record each
+# result for the Health tab. State is observed only: with one endpoint per
+# cluster Praxis keeps routing to it even when unhealthy, and failover is still
+# driven by the on_result rules in the router chain.
+clusters:
+  - name: vllm-cpu
+    endpoints: ["trace-ui:8081"]
+    health_check:
+      type: http
+      path: /health
+      expected_status: 200
+      interval_ms: 5000
+      timeout_ms: 2000
+      healthy_threshold: 2
+      unhealthy_threshold: 2
+  - name: vllm-gpu
+    endpoints: ["trace-ui:8082"]
+    health_check:
+      type: http
+      path: /health
+      expected_status: 200
+      interval_ms: 5000
+      timeout_ms: 2000
+      healthy_threshold: 2
+      unhealthy_threshold: 2
+
 # Per-peer circuit breaker for the failover sub-requests below. It counts
 # connect/io/deadline failures only; an HTTP 502 relayed by trace-ui does not
 # count, so it opens when a relay is unreachable or hangs past step_timeout_ms.
@@ -53,7 +82,7 @@ filter_chains:
             filters:
               - filter: llm_d_sc
                 endpoint: "llm-d-sc:50051"
-                default_cluster: vllm-gpu
+                default_cluster: vllm-cpu
                 routes:
                   - label: SIMPLE
                     cluster: vllm-cpu
@@ -69,6 +98,8 @@ filter_chains:
                 on_unavailable: default_cluster
                 on_resource_exhausted: default_cluster
                 emit_headers: true
+              # Health state for these clusters comes from the top-level
+              # `clusters:` list above, matched by name.
               - filter: load_balancer
                 clusters:
                   - name: vllm-gpu
