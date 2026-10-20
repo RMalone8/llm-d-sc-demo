@@ -6,5 +6,7 @@ namespace: praxis-sr-demo
 resources:
   - namespace.yaml
   - ../../base
-  - vllm-cpu.yaml
-  - vllm-gpu.yaml
+  - vllm-cpu-runtime.yaml
+  - vllm-cuda-runtime.yaml
+  - vllm-cpu-inferenceservice.yaml
+  - vllm-gpu-inferenceservice.yaml
