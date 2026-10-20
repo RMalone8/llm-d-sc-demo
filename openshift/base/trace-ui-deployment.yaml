@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: trace-ui
-          image: quay.io/rmalone/praxis-trace-ui:latest
+          image: quay.io/rmalone/praxis-trace-ui:v0.1.0
           env:
             - name: PRAXIS_UPSTREAM
               value: http://praxis:8080

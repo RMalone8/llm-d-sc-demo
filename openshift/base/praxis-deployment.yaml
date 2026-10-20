@@ -16,7 +16,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: praxis
-          image: quay.io/rmalone/praxis-llm-d-sc:latest
+          image: quay.io/rmalone/praxis-llm-d-sc:v0.5.4
           # Avoid the image's broken -c entrypoint and select the mounted file
           # through the environment instead.
           command: ["praxis"]

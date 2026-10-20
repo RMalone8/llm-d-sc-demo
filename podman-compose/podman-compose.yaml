@@ -3,7 +3,7 @@ version: '3.8'
 services:
   praxis:
     container_name: praxis
-    image: quay.io/rmalone/praxis-llm-d-sc:latest
+    image: quay.io/rmalone/praxis-llm-d-sc:v0.5.4
     ports:
       - "8080:8080"
     volumes:
@@ -15,7 +15,7 @@ services:
 
   llm-d-sc:
     container_name: llm-d-sc
-    image: quay.io/rmalone/llm-d-sc:latest
+    image: quay.io/rmalone/llm-d-sc:v0.1.0
     volumes:
       - ${LLM_D_SC_MODEL_DIR:?Set LLM_D_SC_MODEL_DIR to the host complexity ModelCar directory}:/models:ro,Z
     environment:
