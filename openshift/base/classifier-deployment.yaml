@@ -16,7 +16,7 @@ spec:
       automountServiceAccountToken: false
       initContainers:
         - name: modelcar
-          image: quay.io/rmalone/llm-d-sc-modelcar:latest
+          image: quay.io/rmalone/llm-d-sc-modelcar:complexity
           command: ["/bin/sh", "-c", "cp -R /models/. /shared/"]
           securityContext:
             allowPrivilegeEscalation: false
@@ -31,7 +31,7 @@ spec:
               mountPath: /shared
       containers:
         - name: llm-d-sc
-          image: quay.io/rmalone/llm-d-sc:latest
+          image: quay.io/rmalone/llm-d-sc:v0.1.0
           env:
             - name: LLM_D_SC_MODEL_DIR
               value: /models

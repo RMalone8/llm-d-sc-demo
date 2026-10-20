@@ -16,7 +16,7 @@ spec:
       terminationGracePeriodSeconds: 5
       containers:
         - name: gen
-          image: quay.io/rmalone/praxis-trace-ui:latest
+          image: quay.io/rmalone/praxis-trace-ui:v0.2.0
           env:
             - name: TARGET
               value: http://trace-ui:8080/v1/chat/completions

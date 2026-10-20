@@ -17,8 +17,6 @@ spec:
       containers:
         - name: praxis
           image: quay.io/rmalone/praxis-ai-llm-d-sc:v0.7.0
-          # The image's binary is praxis-ai (Praxis AI v0.7.0 plus llm_d_sc).
-          # Select the mounted config through the environment.
           command: ["praxis-ai"]
           env:
             - name: PRAXIS_CONFIG
