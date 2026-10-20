@@ -1,9 +1,8 @@
 # OpenShift manifest guide
 
-This directory deploys the same logical stack as the compose files under
-`podman-compose/` using Kustomize, OpenShift Routes, KServe `InferenceService`
-resources, and a ModelCar init container, plus Open WebUI and a trace UI that
-the compose stack does not have.
+This directory deploys the stack with Kustomize, OpenShift Routes, KServe
+`InferenceService` resources, and a ModelCar init container, alongside Open
+WebUI and a trace UI.
 
 ## Layout and ownership
 
@@ -44,8 +43,9 @@ The current overlay targets namespace `praxis-sr-demo`. Although the base names
   `resourceNames`). Any wider write access is a security decision.
 - `praxis-traffic-gen` stays at `replicas: 0`; the trace UI's Simulate Traffic
   button scales it to 0 or 1. Do not set replicas in a patch.
-- Both `InferenceService` resources depend on cluster-provided runtime names.
-  Do not assume those names are portable to another cluster.
+- Each `InferenceService` references a `ServingRuntime` by name
+  (`vllm-cpu-x86-runtime`, `vllm-cuda-runtime`), and the overlay ships both.
+  Keep the names in sync when renaming either side.
 
 ## Validation
 
@@ -64,5 +64,6 @@ see the root `AGENTS.md`.
 
 When changing image names, route hostnames, namespaces, runtime names, model
 URIs, or resource requests, treat them as environment-specific choices and
-update the README when operator action is required. The Praxis image is pinned
-(`v0.7.0`); the trace-ui image tag is bumped by hand after each build.
+update the README when operator action is required. Images are pinned to
+version tags, and a tag is bumped by hand after the new image is built and
+mirrored.
