@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: praxis-traffic-gen
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: praxis-traffic-gen
+  template:
+    metadata:
+      labels:
+        app: praxis-traffic-gen
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 5
+      containers:
+        - name: gen
+          image: quay.io/rmalone/praxis-trace-ui:v0.2.0
+          env:
+            - name: TARGET
+              value: http://trace-ui:8080/v1/chat/completions
+            - name: INTERVAL
+              value: "5"
+          command:
+            - python3
+            - -u
+            - -c
+            - |
+                import json, os, random, signal, time, urllib.request, urllib.error
+                # PID 1 ignores SIGTERM without a handler, so the pod would keep sending
+                # until SIGKILL. Exit at once, even mid-request.
+                signal.signal(signal.SIGTERM, lambda *_: os._exit(0))
+                URL = os.environ["TARGET"]
+                INTERVAL = float(os.environ["INTERVAL"])
+                SIMPLE = [
+                    "What is the capital of France?",
+                    "How many days are in a week?",
+                    "Name a primary color.",
+                    "What is 7 plus 5?",
+                    "Who wrote Romeo and Juliet?",
+                    "What is the opposite of hot?",
+                    "Spell the word 'banana'.",
+                    "What color is the sky on a clear day?",
+                ]
+                COMPLEX = [
+                    "Design a multi-region distributed rate limiter with exactly-once semantics and prove its correctness under network partitions.",
+                    "Prove that the halting problem is undecidable, then explain how Rice's theorem generalizes the result step by step.",
+                    "Architect a fault-tolerant event-sourcing system with CQRS, saga orchestration, and zero-downtime schema evolution; justify each tradeoff formally.",
+                    "Derive the time complexity of Dijkstra's algorithm with a Fibonacci heap and prove the amortized bounds rigorously.",
+                    "Design a consensus protocol tolerant of Byzantine faults for 100 nodes and prove safety and liveness under partial synchrony.",
+                    "Formally verify that a lock-free concurrent queue is linearizable, specifying the invariants and the proof obligations.",
+                    "Design a sharded multi-tenant database architecture with online resharding and prove no lost writes during migration.",
+                    "Prove the correctness of the Raft leader election algorithm and analyze its failure modes under clock skew.",
+                ]
+                n = 0
+                while True:
+                    started = time.time()
+                    n += 1
+                    kind = random.choice(["simple", "complex"])
+                    prompt = random.choice(SIMPLE if kind == "simple" else COMPLEX)
+                    expect = "vllm-cpu" if kind == "simple" else "vllm-gpu"
+                    body = json.dumps({
+                        "model": "Semantic-Qwen",
+                        "messages": [{"role": "user", "content": prompt}],
+                        "max_tokens": 24,
+                    }).encode()
+                    req = urllib.request.Request(URL, data=body, headers={"Content-Type": "application/json"})
+                    hdrs = {}
+                    try:
+                        with urllib.request.urlopen(req, timeout=120) as r:
+                            r.read()
+                            status, hdrs = r.status, r.headers
+                    except urllib.error.HTTPError as e:
+                        status, hdrs = e.code, e.headers
+                    except Exception as e:
+                        status = type(e).__name__
+                    route = hdrs.get("X-Demo-Route", "-") if hdrs else "-"
+                    label = hdrs.get("X-Demo-Classification", "-") if hdrs else "-"
+                    fb = hdrs.get("X-Praxis-Fallback", "-") if hdrs else "-"
+                    ms = int((time.time() - started) * 1000)
+                    match = "ok" if route == expect else "MISMATCH"
+                    print(f"#{n} sent={kind:7} expect={expect} got={route} label={label} fallback={fb} status={status} {ms}ms {match} | {prompt[:55]}", flush=True)
+                    time.sleep(max(0.0, INTERVAL - (time.time() - started)))
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault

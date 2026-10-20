@@ -4,6 +4,8 @@ metadata:
   name: trace-ui
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: trace-ui
@@ -12,9 +14,12 @@ spec:
       labels:
         app: trace-ui
     spec:
+      # Reads pod and Deployment state for the architecture diagram (see
+      # trace-ui-rbac.yaml).
+      serviceAccountName: trace-ui
       containers:
         - name: trace-ui
-          image: quay.io/rmalone/praxis-trace-ui:v0.1.0
+          image: quay.io/rmalone/praxis-trace-ui:v0.2.0
           env:
             - name: PRAXIS_UPSTREAM
               value: http://praxis:8080

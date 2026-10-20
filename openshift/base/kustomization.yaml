@@ -14,9 +14,11 @@ resources:
   - openwebui-service.yaml
   - openwebui-route.yaml
   - trace-ui-pvc.yaml
+  - trace-ui-rbac.yaml
   - trace-ui-deployment.yaml
   - trace-ui-service.yaml
   - trace-ui-route.yaml
+  - traffic-deployment.yaml
 
 configMapGenerator:
   - name: praxis-config

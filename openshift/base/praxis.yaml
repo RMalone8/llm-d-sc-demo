@@ -3,6 +3,25 @@ insecure_options:
 
 admin:
   address: "127.0.0.1:9901"
+  metrics_address: "127.0.0.1:9902"
+
+clusters:
+  - name: vllm-any
+    endpoints: ["trace-ui:8081", "trace-ui:8082"]
+    health_check:
+      type: http
+      path: /health
+      expected_status: 200
+      interval_ms: 5000
+      timeout_ms: 2000
+      healthy_threshold: 2
+      unhealthy_threshold: 2
+
+runtime:
+  subrequest_circuit_breaker:
+    consecutive_failures: 3
+    recovery_window_secs: 30
+    half_open_timeout_secs: 15
 
 listeners:
   - name: ai-gateway
@@ -26,27 +45,62 @@ filter_chains:
             value: application/json
         body: >-
           {"object":"list","data":[{"id":"Semantic-Qwen","object":"model","created":0,"owned_by":"praxis"}]}
-      - filter: llm_d_sc
-        endpoint: "llm-d-sc:50051"
-        default_cluster: vllm-cpu
-        routes:
-          - label: SIMPLE
-            cluster: vllm-cpu
-          - label: MEDIUM
-            cluster: vllm-cpu
-          - label: COMPLEX
-            cluster: vllm-gpu
-          - label: REASONING
-            cluster: vllm-gpu
-        timeout_ms: 500
-        connect_timeout_ms: 1000
-        min_score: 0.0
-        on_unavailable: default_cluster
-        on_resource_exhausted: default_cluster
-        emit_headers: true
-      - filter: load_balancer
-        clusters:
-          - name: vllm-gpu
-            endpoints: ["trace-ui:8082"]
-          - name: vllm-cpu
-            endpoints: ["trace-ui:8081"]
+      - filter: iterative_request_router
+        initial_step: classify-and-route
+        max_iterations: 3
+        timeout_ms: 300000
+        step_timeout_ms: 120000
+        steps:
+          - name: classify-and-route
+            filters:
+              - filter: llm_d_sc
+                endpoint: "llm-d-sc:50051"
+                default_cluster: vllm-cpu
+                routes:
+                  - label: SIMPLE
+                    cluster: vllm-cpu
+                  - label: MEDIUM
+                    cluster: vllm-cpu
+                  - label: COMPLEX
+                    cluster: vllm-gpu
+                  - label: REASONING
+                    cluster: vllm-gpu
+                timeout_ms: 500
+                connect_timeout_ms: 1000
+                min_score: 0.0
+                on_unavailable: default_cluster
+                on_resource_exhausted: default_cluster
+                emit_headers: true
+              - filter: load_balancer
+                clusters:
+                  - name: vllm-gpu
+                    endpoints: ["trace-ui:8082"]
+                  - name: vllm-cpu
+                    endpoints: ["trace-ui:8081"]
+            on_result:
+              - origin: transport
+                next: failover
+              - status: [429, 500, 502, 503, 504]
+                next: failover
+              - default: true
+                done: true
+          - name: failover
+            filters:
+              - filter: headers
+                request_set:
+                  - name: Content-Type
+                    value: application/json
+                response_add:
+                  - name: X-Praxis-Fallback
+                    value: "true"
+              - filter: router
+                routes:
+                  - path_prefix: "/"
+                    cluster: vllm-any
+              - filter: load_balancer
+                clusters:
+                  - name: vllm-any
+                    endpoints: ["trace-ui:8081", "trace-ui:8082"]
+            on_result:
+              - default: true
+                done: true

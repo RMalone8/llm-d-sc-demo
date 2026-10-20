@@ -16,10 +16,8 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: praxis
-          image: quay.io/rmalone/praxis-llm-d-sc:v0.5.4
-          # Avoid the image's broken -c entrypoint and select the mounted file
-          # through the environment instead.
-          command: ["praxis"]
+          image: quay.io/rmalone/praxis-ai-llm-d-sc:v0.7.0
+          command: ["praxis-ai"]
           env:
             - name: PRAXIS_CONFIG
               value: /etc/praxis/config.yaml
@@ -30,13 +28,16 @@ spec:
             - name: admin
               containerPort: 9901
               protocol: TCP
+          # Readiness uses /healthy, not /ready: with active health checks on,
+          # /ready returns 503 whenever a vLLM cluster is down, which would pull
+          # the whole gateway out of the Service exactly when failover must work.
           readinessProbe:
             exec:
-              command: ["wget", "-qO-", "http://127.0.0.1:9901/ready"]
+              command: ["wget", "-qO-", "http://127.0.0.1:9902/healthy"]
             initialDelaySeconds: 3
           livenessProbe:
             exec:
-              command: ["wget", "-qO-", "http://127.0.0.1:9901/healthy"]
+              command: ["wget", "-qO-", "http://127.0.0.1:9902/healthy"]
             initialDelaySeconds: 5
           resources:
             requests:
